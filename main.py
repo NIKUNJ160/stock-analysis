@@ -2,6 +2,7 @@ import asyncio
 import pandas as pd
 import sys
 import os
+import json
 
 from services.market_data_service.mock_feed import mock_websocket_feed
 from services.model_service.realtime_predictor import RealtimePredictor
@@ -60,11 +61,23 @@ async def signal_consumer(signal_queue: asyncio.Queue):
     Reads signals and prints them.
     """
     print("[SignalEngine] Started listening for trading signals...")
+    latest_signals = {}
+    signals_file = os.path.join("data", "latest_signals.json")
     while True:
         signal = await signal_queue.get()
         print(f"\n🚀 SIGNAL GENERATED: {signal['symbol']} @ {signal['timestamp']}")
         print(f"   Model: {signal['model_prediction']}")
         print(f"   Confidence: {signal['confidence']*100:.2f}%")
+        
+        # Save for dashboard
+        latest_signals[signal['symbol']] = {
+            "timestamp": signal['timestamp'],
+            "prediction": signal['model_prediction'],
+            "confidence": f"{signal['confidence']*100:.2f}%"
+        }
+        with open(signals_file, "w") as f:
+            json.dump(latest_signals, f)
+            
         signal_queue.task_done()
 
 async def main():
