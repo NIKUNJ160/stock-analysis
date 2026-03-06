@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 from datetime import datetime
 
-from config.settings import TARGET_SYMBOLS, BASE_DIR
+from config.settings import TARGET_SYMBOLS, BASE_DIR, API_HOST, API_PORT
 from src.utils.logger import get_logger
 from src.utils.helpers import safe_read_json
 
@@ -121,4 +121,4 @@ async def list_models():
 if __name__ == "__main__":
     import uvicorn
     logger.info("Starting FastAPI server...")
-    uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info")
+    uvicorn.run(app, host=API_HOST, port=API_PORT, log_level="info")

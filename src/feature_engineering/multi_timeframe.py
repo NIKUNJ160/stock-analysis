@@ -144,8 +144,8 @@ class MultiTimeframeAnalyzer:
                         ema_9 = latest.get('ema_9', 0)
                         ema_21 = latest.get('ema_21', 0)
                         summary[tf] = 'bullish' if ema_9 > ema_21 else 'bearish'
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"Could not compute trend for {tf}: {e}")
         
         # Agreement
         trends = list(summary.values())

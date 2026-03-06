@@ -151,6 +151,7 @@ class Backtester:
                     'confidence': confidence,
                 }
             except Exception as e:
+                logger.debug(f"Skipping prediction at idx {i}: {e}")
                 continue
             
             # Strategy decision

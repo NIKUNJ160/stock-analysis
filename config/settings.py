@@ -76,7 +76,7 @@ REDIS_PORT = 6379
 REDIS_DB = 0
 
 # API Configuration
-API_HOST = "0.0.0.0"
+API_HOST = os.getenv("API_HOST", "127.0.0.1")
 API_PORT = 8000
 
 # Feature Buffer

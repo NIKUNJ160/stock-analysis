@@ -1,5 +1,5 @@
 import streamlit as st
-import subprocess
+import subprocess  # nosec B404
 import os
 import time
 import json
@@ -27,7 +27,7 @@ def start_engine():
         os.makedirs("data", exist_ok=True)
         log_file = open(os.path.join("data", "engine_logs.txt"), "w", encoding="utf-8")
         st.session_state.log_file = log_file
-        st.session_state.engine_process = subprocess.Popen(
+        st.session_state.engine_process = subprocess.Popen(  # nosec B603
             [venv_python, "-u", "main.py"],
             stdout=log_file, stderr=subprocess.STDOUT, text=True, bufsize=1
         )
