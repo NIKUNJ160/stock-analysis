@@ -13,3 +13,4 @@ tensorflow==2.16.1
 keras==3.0.5
 pytest==8.1.1
 ta==0.11.0
+breeze-connect
