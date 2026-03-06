@@ -17,7 +17,18 @@ os.makedirs(DATA_DIR / "backtest_results", exist_ok=True)
 # ═══════════════════════════════════════════
 #  Market Data Configuration
 # ═══════════════════════════════════════════
-TARGET_SYMBOLS = ["^NSEI", "RELIANCE.NS", "TCS.NS", "HDFCBANK.NS"]
+TARGET_SYMBOLS = [
+    "^NSEI",         # Nifty 50 Benchmark
+    "RELIANCE.NS",   # Reliance Industries
+    "TCS.NS",        # Tata Consultancy Services
+    "HDFCBANK.NS",   # HDFC Bank
+    "INFY.NS",       # Infosys
+    "ICICIBANK.NS",  # ICICI Bank
+    "SBIN.NS",       # State Bank of India
+    "BHARTIARTL.NS", # Bharti Airtel
+    "ITC.NS",        # ITC Limited
+    "LT.NS"          # Larsen & Toubro
+]
 TIMEFRAME = "5m"
 HISTORY_DAYS = 60
 MULTI_TIMEFRAMES = ["15m", "1h"]  # Higher timeframes for MTF analysis
@@ -26,6 +37,13 @@ MULTI_TIMEFRAMES = ["15m", "1h"]  # Higher timeframes for MTF analysis
 WS_URL = "ws://localhost:8765"  # For live data feed
 USE_MOCK_FEED = True  # Use historical data replay instead of live WS
 MOCK_EMIT_DELAY = 0.05  # Seconds between mock candle emissions
+
+# ═══════════════════════════════════════════
+#  Broker Configuration (ICICI Breeze)
+# ═══════════════════════════════════════════
+ICICI_API_KEY = os.getenv("ICICI_API_KEY", "")
+ICICI_API_SECRET = os.getenv("ICICI_API_SECRET", "")
+ICICI_SESSION_TOKEN = os.getenv("ICICI_SESSION_TOKEN", "")
 
 # ═══════════════════════════════════════════
 #  Model Configuration

@@ -119,6 +119,6 @@ async def list_models():
 
 
 if __name__ == "__main__":
-    import uvicorn
+    import uvicorn  # pylint: disable=import-outside-toplevel
     logger.info("Starting FastAPI server...")
     uvicorn.run(app, host=API_HOST, port=API_PORT, log_level="info")

@@ -4,6 +4,13 @@ from datetime import datetime
 from enum import Enum
 from typing import Optional
 import uuid
+import time
+import os
+
+try:
+    from breeze_connect import BreezeConnect
+except ImportError:
+    BreezeConnect = None
 
 from src.utils.logger import get_logger
 
@@ -316,6 +323,164 @@ class PaperTradingBroker(BrokerAPI):
             "total_return": (equity - self.initial_capital) / self.initial_capital,
             "open_positions": len(self.positions),
         }
+
+
+class ICICIBroker(BrokerAPI):
+    """
+    Live broker integration for ICICI Direct using breeze-connect.
+    """
+    
+    def __init__(self, api_key: str, api_secret: str, session_token: str):
+        if BreezeConnect is None:
+            raise ImportError("breeze-connect is not installed.")
+        
+        self.breeze = BreezeConnect(api_key=api_key)
+        self.breeze.generate_session(api_secret=api_secret, session_token=session_token)
+        logger.info("ICICIBroker session successfully initialized.")
+        
+        self.orders: dict[str, Order] = {}
+
+    def _format_symbol(self, symbol: str) -> tuple[str, str]:
+        """Convert standard format 'RELIANCE.NS' to breeze format ('RELIANCE', 'NSE')."""
+        parts = symbol.split('.')
+        exchange = "NSE"
+        if len(parts) > 1 and parts[1].upper() == "BO":
+            exchange = "BSE"
+        return parts[0], exchange
+
+    def place_order(self, order: Order) -> Order:
+        stock_code, exchange_code = self._format_symbol(order.symbol)
+        
+        action = "buy" if order.side == OrderSide.BUY else "sell"
+        order_type_map = {
+            OrderType.MARKET: "market",
+            OrderType.LIMIT: "limit",
+            OrderType.STOP_MARKET: "stoploss",
+            OrderType.STOP_LIMIT: "stoploss" 
+        }
+        
+        try:
+            resp = self.breeze.place_order(
+                stock_code=stock_code,
+                exchange_code=exchange_code,
+                product="cash",  # Intraday cash. Alternative: 'margin', 'delivery'
+                action=action,
+                order_type=order_type_map[order.order_type],
+                stoploss=str(order.stop_price) if order.stop_price else "0",
+                quantity=str(int(order.quantity)),
+                price=str(order.price) if order.price else "0",
+                validity="day"
+            )
+            
+            if resp.get('Status') == 200:
+                broker_order_id = resp.get('Success', {}).get('order_id', order.order_id)
+                order.order_id = str(broker_order_id)
+                order.status = OrderStatus.SUBMITTED
+                self.orders[order.order_id] = order
+                logger.info(f"ICICIBroker order placed: {order.order_id}")
+            else:
+                order.status = OrderStatus.REJECTED
+                logger.error(f"ICICIBroker placement failed: {resp.get('Error')}")
+                
+        except Exception as e:
+            logger.error(f"ICICIBroker exception during place_order: {e}")
+            order.status = OrderStatus.REJECTED
+            
+        return order
+
+    def cancel_order(self, order_id: str) -> bool:
+        if order_id not in self.orders:
+            return False
+            
+        order = self.orders[order_id]
+        stock_code, exchange_code = self._format_symbol(order.symbol)
+        
+        try:
+            resp = self.breeze.cancel_order(
+                exchange_code=exchange_code,
+                order_id=order_id
+            )
+            if resp.get('Status') == 200:
+                order.status = OrderStatus.CANCELLED
+                return True
+            logger.error(f"Cancel failed: {resp.get('Error')}")
+            return False
+        except Exception as e:
+            logger.error(f"Exception during cancel_order: {e}")
+            return False
+
+    def get_order_status(self, order_id: str) -> Optional[Order]:
+        if order_id not in self.orders:
+            return None
+            
+        order = self.orders[order_id]
+        stock_code, exchange_code = self._format_symbol(order.symbol)
+        
+        try:
+            resp = self.breeze.get_trade_detail(
+                exchange_code=exchange_code,
+                order_id=order_id
+            )
+            if resp.get('Status') == 200 and resp.get('Success'):
+                details = resp['Success'][0]
+                api_status = details.get('status', '').lower()
+                
+                if api_status in ['executed', 'traded']:
+                    order.status = OrderStatus.FILLED
+                    order.filled_quantity = float(details.get('executed_quantity', order.quantity))
+                    order.filled_price = float(details.get('average_price', 0))
+                elif api_status == 'cancelled':
+                    order.status = OrderStatus.CANCELLED
+                elif api_status == 'rejected':
+                    order.status = OrderStatus.REJECTED
+                elif api_status == 'partially executed':
+                    order.status = OrderStatus.PARTIAL_FILL
+                    
+        except Exception as e:
+            logger.error(f"Exception fetching status for {order_id}: {e}")
+            
+        return order
+
+    def get_positions(self) -> list[dict]:
+        try:
+            resp = self.breeze.get_portfolio_positions()
+            if resp.get('Status') == 200 and resp.get('Success'):
+                positions = []
+                for p in resp['Success']:
+                    qty = int(p.get('quantity', 0))
+                    if qty == 0:
+                        continue
+                    positions.append({
+                        "symbol": f"{p.get('stock_code')}.NS", # Extrapolating NS for simplicity
+                        "qty": abs(qty),
+                        "avg_price": float(p.get('average_price', 0)),
+                        "side": "LONG" if qty > 0 else "SHORT",
+                        "current_price": float(p.get('ltp', 0)),
+                        "unrealized_pnl": float(p.get('unrealized_pnl', 0)),
+                    })
+                return positions
+            return []
+        except Exception as e:
+            logger.error(f"Exception fetching positions: {e}")
+            return []
+
+    def get_balance(self) -> dict:
+        try:
+            resp = self.breeze.get_funds()
+            if resp.get('Status') == 200 and resp.get('Success'):
+                funds = resp['Success']
+                available_margin = float(funds.get('available_margin', 0))
+                return {
+                    "cash": available_margin,
+                    "equity": available_margin, 
+                    "initial_capital": available_margin, 
+                    "total_return": 0.0,
+                    "open_positions": len(self.get_positions()),
+                }
+            return {"cash": 0, "equity": 0}
+        except Exception as e:
+            logger.error(f"Exception fetching balance: {e}")
+            return {"cash": 0, "equity": 0}
 
 
 def create_order(symbol: str, side: str, quantity: float, order_type: str = "MARKET",

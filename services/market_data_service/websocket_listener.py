@@ -2,7 +2,7 @@ import asyncio
 import json
 import websockets
 import pandas as pd
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional, Callable
 
 from config.settings import TARGET_SYMBOLS, TIMEFRAME
@@ -100,7 +100,7 @@ class CandleAggregator:
         if timeframe not in self.TIMEFRAME_SECONDS:
             raise ValueError(f"Invalid timeframe: {timeframe}")
         self.timeframe = timeframe
-        self.interval_seconds = self.TIMEFRAME_SECONDS.get(timeframe)
+        self.interval_seconds = int(self.TIMEFRAME_SECONDS.get(timeframe, 300))
         self.current_candles: dict[str, dict] = {}  # symbol -> current building candle
         self._stop_event = asyncio.Event()
         
@@ -133,9 +133,9 @@ class CandleAggregator:
                 
             price = float(tick.get("price", tick.get("close", 0)))
             volume = float(tick.get("volume", 0))
-            ts = datetime.fromisoformat(tick.get("timestamp", datetime.now(tz=datetime.timezone.utc).isoformat()))
+            ts = datetime.fromisoformat(tick.get("timestamp", datetime.now(tz=timezone.utc).isoformat()))
             if ts.tzinfo is None:
-                ts = ts.replace(tzinfo=datetime.timezone.utc)
+                ts = ts.replace(tzinfo=timezone.utc)
             
             candle_start = self._get_candle_start(ts)
             

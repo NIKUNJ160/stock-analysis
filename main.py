@@ -11,7 +11,7 @@ from src.signal_engine.signal_filter import SignalFilter, FilterConfig
 from src.risk_management.risk_manager import RiskManager, RiskConfig
 from src.risk_management.stoploss import StopLossEngine
 from src.risk_management.position_sizing import PositionSizer
-from services.execution_service.broker_api import PaperTradingBroker
+from services.execution_service.broker_api import PaperTradingBroker, ICICIBroker
 from services.execution_service.order_manager import OrderManager
 from infrastructure.redis_cache import RedisCache
 from src.utils.logger import get_logger
@@ -22,7 +22,7 @@ from config.settings import (
     MAX_EXPOSURE_PER_SYMBOL, MAX_DAILY_LOSS,
     SIGNAL_MIN_CONFIDENCE, SIGNAL_MIN_MODEL_CONFIDENCE,
     SIGNAL_COOLDOWN_SECONDS, SIGNAL_MAX_VOLATILITY_RATIO,
-    SL_ATR_MULTIPLIER,
+    SL_ATR_MULTIPLIER, ICICI_API_KEY, ICICI_API_SECRET, ICICI_SESSION_TOKEN
 )
 
 logger = get_logger("Main")
@@ -91,9 +91,16 @@ class SignalService:
         ))
         self.sl_engine = StopLossEngine()
         self.sizer = PositionSizer()
-        self.broker = PaperTradingBroker(initial_capital=MAX_CAPITAL)
+        if ICICI_API_KEY and ICICI_API_SECRET and ICICI_SESSION_TOKEN:
+            logger.info("Initializing Live ICICI Breeze Broker...")
+            self.broker = ICICIBroker(ICICI_API_KEY, ICICI_API_SECRET, ICICI_SESSION_TOKEN)
+        else:
+            logger.info("No ICICI credentials found. Defaulting to Paper Trading Broker.")
+            self.broker = PaperTradingBroker(initial_capital=MAX_CAPITAL)
+            
         self.order_manager = OrderManager(self.broker, self.risk_manager, MAX_CAPITAL)
         self.cache = RedisCache()
+        self.latest_signals: dict[str, dict] = {}
         os.makedirs("data", exist_ok=True)
         self.signals_file = os.path.join("data", "latest_signals.json")
         self.portfolio_file = os.path.join("data", "portfolio.json")
