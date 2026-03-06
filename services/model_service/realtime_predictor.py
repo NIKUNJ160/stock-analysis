@@ -1,11 +1,13 @@
 import asyncio
 import joblib
 import pandas as pd
-import sys
-import os
+import numpy as np
 
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..')))
 from config.settings import MODELS_DIR, TARGET_SYMBOLS, TIMEFRAME
+from src.utils.logger import get_logger
+
+logger = get_logger("ModelService")
+
 
 class RealtimePredictor:
     def __init__(self):
@@ -13,51 +15,75 @@ class RealtimePredictor:
         self.load_models()
         
     def load_models(self):
-        """Loads models from disk into memory."""
+        from src.utils.helpers import safe_load_model
         for symbol in TARGET_SYMBOLS:
             filepath = MODELS_DIR / f"{symbol}_{TIMEFRAME}_rf.pkl"
             if filepath.exists():
-                self.models[symbol] = joblib.load(filepath)
-                print(f"[ModelService] Loaded model for {symbol}")
+                self.models[symbol] = safe_load_model(filepath)
+                logger.info(f"Loaded model for {symbol}")
             else:
-                print(f"[ModelService] Warning: No trained model found for {symbol} at {filepath}")
+                logger.warning(f"No trained model found for {symbol} at {filepath}")
 
     async def prediction_loop(self, feature_queue: asyncio.Queue, signal_queue: asyncio.Queue):
         """
         Continuously listens for new feature vectors, runs inference, and passes signals.
         """
-        print("[ModelService] Listening for incoming features...")
+        logger.info("Listening for incoming features...")
         while True:
             packet = await feature_queue.get()
             symbol = packet['symbol']
             timestamp = packet['timestamp']
+            features_df = packet['features']
             
-            # The feature vector from the feature engine
-            features_df = packet['features'] 
-            
-            # Make sure we have a model
             if symbol not in self.models:
-                print(f"[ModelService] Skipping prediction for {symbol}: No model loaded.")
+                logger.warning(f"Skipping prediction for {symbol}: No model loaded.")
                 feature_queue.task_done()
                 continue
+            
+            try:
+                model = self.models[symbol]
                 
-            model = self.models[symbol]
+                # Clean features: drop raw OHLCV to avoid leakage during inference
+                drop_cols = ['open', 'high', 'low', 'close', 'volume']
+                feature_cols = [c for c in features_df.columns if c not in drop_cols]
+                clean_features = features_df[feature_cols]
+                
+                # Check for NaN/Inf values
+                if clean_features.isna().any().any() or np.isinf(clean_features.values).any():
+                    logger.warning(f"NaN/Inf detected in features for {symbol}, skipping")
+                    feature_queue.task_done()
+                    continue
+                
+                # Check for schema drift using model.feature_names_in_ if available
+                if hasattr(model, 'feature_names_in_'):
+                    expected_features = list(model.feature_names_in_)
+                    actual_features = clean_features.columns.tolist()
+                    if expected_features != actual_features:
+                        class SchemaMismatchError(Exception): pass
+                        raise SchemaMismatchError(f"SCHEMA MISMATCH for {symbol}! Expected {len(expected_features)} features, got {len(actual_features)}. Stopping service to prevent bad predictions.")
+                
+                # Run Inference
+                probabilities = model.predict_proba(clean_features)[0]
+                prediction = model.predict(clean_features)[0]
+                pred_index = list(model.classes_).index(prediction)
+                confidence = float(probabilities[pred_index])
+                
+                signal_msg = {
+                    "symbol": symbol,
+                    "timestamp": timestamp,
+                    "model_prediction": int(prediction),
+                    "prediction_label": "BUY" if prediction == 1 else "HOLD/SELL",
+                    "confidence": confidence,
+                    "probabilities": probabilities.tolist(),
+                    "features_used": clean_features.columns.tolist(),
+                    "features": features_df,
+                    "close_price": packet.get('close_price', features_df['close'].iloc[-1] if 'close' in features_df.columns else 0)
+                }
+                
+                await signal_queue.put(signal_msg)
+                logger.debug(f"Prediction for {symbol}: {'BUY' if prediction == 1 else 'HOLD/SELL'} ({confidence:.2%})")
+                
+            except Exception as e:
+                logger.error(f"Prediction error for {symbol}: {e}")
             
-            # Run Inference
-            # predict_proba returns array like [[prob_class0, prob_class1]]
-            probabilities = model.predict_proba(features_df)[0]
-            prediction = model.predict(features_df)[0]
-            
-            confidence = float(probabilities[prediction])
-            
-            # Construct Signal
-            signal_msg = {
-                "symbol": symbol,
-                "timestamp": timestamp,
-                "model_prediction": "BUY" if prediction == 1 else "HOLD/SELL",
-                "confidence": confidence,
-                "raw_features_used": features_df.to_dict('records')[0] # useful for debugging
-            }
-            
-            await signal_queue.put(signal_msg)
             feature_queue.task_done()

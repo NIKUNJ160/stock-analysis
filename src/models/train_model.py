@@ -1,11 +1,16 @@
 import pandas as pd
 import numpy as np
 import os
-import sys
 
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 from config.settings import TARGET_SYMBOLS, TIMEFRAME, RAW_DATA_DIR, TRAIN_TEST_SPLIT, PREDICT_HORIZON
 from src.models.random_forest import train_rf, evaluate_model, save_model
+from src.utils.logger import get_logger
+
+logger = get_logger("Models.Training")
+
+# Raw OHLCV columns that must be dropped to prevent lookahead bias
+RAW_OHLCV_COLS = ['open', 'high', 'low', 'close', 'volume']
+
 
 def create_target_labels(df: pd.DataFrame, horizon: int = PREDICT_HORIZON) -> pd.DataFrame:
     """
@@ -13,15 +18,11 @@ def create_target_labels(df: pd.DataFrame, horizon: int = PREDICT_HORIZON) -> pd
     Target: 1 if the price went up after `horizon` candles, 0 otherwise.
     """
     df = df.copy()
-    # Current close vs Future close
     df['future_close'] = df['close'].shift(-horizon)
-    
-    # 1 if future price > current price + a tiny fee threshold
     df['target'] = np.where(df['future_close'] > df['close'] * 1.0005, 1, 0)
-    
-    # Drop rows at the end that don't have a future_close yet
     df = df.dropna(subset=['future_close'])
     return df
+
 
 def run_training_pipeline():
     features_dir = RAW_DATA_DIR.parent / 'features'
@@ -30,32 +31,32 @@ def run_training_pipeline():
         feature_file = features_dir / f"{symbol}_{TIMEFRAME}_features.csv"
         
         if feature_file.exists():
-            print(f"\n========== Starting Training for {symbol} ==========")
+            logger.info(f"========== Starting Training for {symbol} ==========")
             df = pd.read_csv(feature_file, index_col=0, parse_dates=True)
             
-            # Create labels
             df = create_target_labels(df)
             
-            # Separate Features (X) and Target (y)
-            # Remove non-predictive columns to prevent lookahead bias
-            drop_cols = ['future_close', 'target'] 
+            # Drop non-predictive columns AND raw OHLCV to prevent lookahead bias
+            drop_cols = ['future_close', 'target'] + RAW_OHLCV_COLS
+            drop_cols = [c for c in drop_cols if c in df.columns]
             X = df.drop(columns=drop_cols)
             y = df['target']
             
-            # Chronological Train/Test Split (Time Series strictly needs this)
+            # Chronological Train/Test Split
             split_idx = int(len(df) * TRAIN_TEST_SPLIT)
             X_train, X_test = X.iloc[:split_idx], X.iloc[split_idx:]
             y_train, y_test = y.iloc[:split_idx], y.iloc[split_idx:]
             
-            print(f"Train size: {len(X_train)} | Test size: {len(X_test)}")
+            logger.info(f"Train size: {len(X_train)} | Test size: {len(X_test)}")
+            logger.info(f"Feature columns ({len(X.columns)}): {list(X.columns)}")
             
-            # Train and Evaluate
             model = train_rf(X_train, y_train, symbol)
             evaluate_model(model, X_test, y_test)
             save_model(model, symbol, TIMEFRAME)
             
         else:
-            print(f"Skipping {symbol}: Feature file not found. Did you run feature_builder.py?")
+            logger.warning(f"Skipping {symbol}: Feature file not found. Run feature_builder.py first.")
+
 
 if __name__ == "__main__":
     run_training_pipeline()
